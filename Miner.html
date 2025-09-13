@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Web Miner Hub (Functional PoC)</title>
+    <style>
+        /* --- Clean Styling --- */
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #121212;
+            color: #e0e0e0;
+            margin: 0;
+            padding: 2em;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .container {
+            width: 100%;
+            max-width: 600px;
+            background-color: #1e1e1e;
+            border-radius: 8px;
+            padding: 2em;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        }
+        h1 {
+            text-align: center;
+            color: #ffffff;
+            margin-top: 0;
+        }
+        .control-group {
+            margin-bottom: 1.5em;
+        }
+        label {
+            display: block;
+            margin-bottom: 0.5em;
+            color: #bbbbbb;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 0.8em;
+            background-color: #2c2c2c;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #e0e0e0;
+            font-size: 1em;
+            box-sizing: border-box;
+        }
+        .button-container {
+            text-align: center;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 1em 2em;
+            border-radius: 4px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover:not(:disabled) {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #555;
+            cursor: not-allowed;
+        }
+        button.stop {
+            background-color: #dc3545;
+        }
+        button.stop:hover {
+            background-color: #a71d2a;
+        }
+        .dashboard {
+            margin-top: 2em;
+            background-color: #2c2c2c;
+            padding: 1.5em;
+            border-radius: 4px;
+        }
+        #status, #hashrate, #shares {
+            font-size: 1.1em;
+            margin: 0.5em 0;
+        }
+        #hashrate span, #shares span {
+            font-weight: bold;
+            color: #4caf50;
+        }
+        .footer-note {
+            text-align: center;
+            margin-top: 2em;
+            color: #777;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Web Miner Hub (Functional PoC)</h1>
+
+        <div class="control-group">
+            <label for="wallet">Your Monero (XMR) Wallet Address:</label>
+            <input type="text" id="wallet" placeholder="Enter your XMR wallet address here">
+        </div>
+        
+        <div class="control-group">
+            <label for="pool">Mining Pool (host:port):</label>
+            <input type="text" id="pool" value="pool.supportxmr.com:443">
+        </div>
+
+        <div class="button-container">
+            <button id="startBtn" disabled>Loading Miner...</button>
+        </div>
+
+        <div class="dashboard">
+            <p id="status">Status: Initializing...</p>
+            <p id="hashrate">Hashrate: <span>0.00 H/s</span></p>
+            <p id="shares">Accepted Shares: <span>0</span></p>
+        </div>
+        
+        <p class="footer-note">This PoC is now running from a self-hosted script. 🚀</p>
+    </div>
+
+    <script>
+        // --- Get references to our HTML elements ---
+        const startBtn = document.getElementById('startBtn');
+        const walletInput = document.getElementById('wallet');
+        const poolInput = document.getElementById('pool');
+        const statusEl = document.getElementById('status');
+        const hashrateEl = document.getElementById('hashrate').querySelector('span');
+        const sharesEl = document.getElementById('shares').querySelector('span');
+
+        // --- State Management ---
+        let miner = null;
+        let isMining = false;
+        let acceptedShares = 0;
+        let hashrateInterval = null;
+
+        // --- The "Orchestrator" Logic ---
+        startBtn.addEventListener('click', () => {
+            if (!isMining) {
+                const wallet = walletInput.value.trim();
+                const pool = poolInput.value.trim();
+                
+                if (!wallet || !pool) {
+                    alert('Please enter a wallet address and a pool.');
+                    return;
+                }
+                
+                startMining(wallet, pool);
+            } else {
+                stopMining();
+            }
+        });
+
+        async function startMining(wallet, pool) {
+            updateUI(true, 'Starting...');
+            acceptedShares = 0;
+            sharesEl.textContent = '0';
+
+            try {
+                miner = new PerfektWeb.Anonymous(wallet, {
+                    pool: pool,
+                    throttle: 0.5 
+                });
+
+                miner.on('accepted', () => {
+                    acceptedShares++;
+                    sharesEl.textContent = acceptedShares;
+                });
+                
+                miner.on('error', (err) => {
+                    console.error('Miner error:', err);
+                    stopMining();
+                    statusEl.textContent = `Status: Error - ${err.message || 'Connection failed'}`;
+                });
+                
+                miner.on('close', () => {
+                    console.log('Connection closed.');
+                    if (isMining) { // Only show connection closed if we were actively mining
+                        stopMining();
+                        statusEl.textContent = 'Status: Connection Closed';
+                    }
+                });
+
+                await miner.start();
+
+                hashrateInterval = setInterval(() => {
+                    if (isMining && miner) {
+                        const hps = miner.getHashesPerSecond();
+                        hashrateEl.textContent = `${hps.toFixed(2)} H/s`;
+                    }
+                }, 1000);
+
+                updateUI(true, 'Mining...');
+
+            } catch (err) {
+                console.error('Failed to start miner:', err);
+                updateUI(false, `Failed to start: ${err.message}`);
+            }
+        }
+
+        async function stopMining() {
+            clearInterval(hashrateInterval);
+            if (miner) {
+                miner.stop();
+                miner = null;
+            }
+            updateUI(false, 'Idle');
+            hashrateEl.textContent = '0.00 H/s';
+        }
+
+        function updateUI(miningStatus, statusText) {
+            isMining = miningStatus;
+            statusEl.textContent = `Status: ${statusText}`;
+            
+            startBtn.textContent = isMining ? 'Stop Mining' : 'Start Mining';
+            startBtn.classList.toggle('stop', isMining);
+
+            walletInput.disabled = isMining;
+            poolInput.disabled = isMining;
+        }
+        
+        // --- SCRIPT LOADER ---
+        (function() {
+            const script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/gh/br3avery-maker/Miner-PoC@main/perfektweb.js';
+            
+            script.onload = () => {
+                // THE FIX IS HERE:
+                // Instead of enabling the button immediately, we wait until the `PerfektWeb` object is actually defined.
+                const checkInterval = setInterval(() => {
+                    if (typeof PerfektWeb !== 'undefined') {
+                        clearInterval(checkInterval); // Stop checking
+                        console.log('Miner controller script loaded and ready.');
+                        statusEl.textContent = 'Status: Ready';
+                        startBtn.textContent = 'Start Mining';
+                        startBtn.disabled = false; // Enable the button
+                    }
+                }, 100); // Check every 100ms
+            };
+            
+            script.onerror = () => {
+                console.error('Failed to load miner controller script from your repo.');
+                statusEl.textContent = 'Status: Error - Could not load miner script.';
+                startBtn.textContent = 'Miner Failed to Load';
+            };
+            
+            document.head.appendChild(script);
+        })();
+    </script>
+
+</body>
+</html>
